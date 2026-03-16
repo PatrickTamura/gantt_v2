@@ -32,6 +32,11 @@ const PAD_RIGHT  = 5;
 const PAD_TOP    = 70;
 const PAD_BOTTOM = 5;
 
+/* ─── Virtualisation / performance constants ───────────────────────────── */
+const ROW_HEIGHT     = 33;   // px – must match yRowHeight signal in spec
+const VIRT_BUFFER    = 15;   // extra rows to render above/below viewport
+const DEPS_THRESHOLD = 150;  // hide dependency lines when visible rows exceed this
+
 /* ─── Build the patched Vega spec ──────────────────────────────────────── */
 function buildSpec(width: number, height: number, data?: any[]): any {
     // Deep-clone so we never mutate BASE_SPEC between calls
@@ -69,6 +74,10 @@ function buildSpec(width: number, height: number, data?: any[]): any {
     // or with an empty array so the chart never silently shows sample data.
     spec.data[0].values = (data && data.length > 0) ? data : [];
 
+    // ── 6. Disable all animations ────────────────────────────────────────
+    if (!spec.config) spec.config = {};
+    spec.config.animation = { duration: 0 };
+
     return spec;
 }
 
@@ -88,11 +97,16 @@ export class Visual implements IVisual {
     private lastHeight = 0;
     private lastDataHash = "";
 
+    // Full dataset kept in TypeScript; only a windowed slice is pushed to Vega
+    private allRows: any[] = [];
+    private virtualScrollY = 0;       // current vertical scroll offset in px
+    private viewportHeight = 400;     // updated on every update() call
+
     // RAF scroll state
     private wheelListener: ((e: WheelEvent) => void) | null = null;
-    private rafPending = false;
-    private pendingXDom:   [number, number] | null = null;
-    private pendingYRange: [number, number] | null = null;
+    private rafPending           = false;
+    private pendingXDom: [number, number] | null = null;
+    private pendingVirtualRefresh = false;  // true = push a new data slice in next RAF
 
     constructor(options: VisualConstructorOptions) {
         this.host = options.element;
@@ -103,17 +117,23 @@ export class Visual implements IVisual {
         const vp = options.viewport;
         const w  = Math.max(200, Math.floor(vp.width));
         const h  = Math.max(100, Math.floor(vp.height));
+        this.viewportHeight = h;
 
         // Extract Power BI data (returns null when no data is bound)
         const pbData = this.extractData(options.dataViews);
         const dataHash = pbData ? JSON.stringify(pbData) : "";
 
-        const sizeChanged = (w !== this.lastWidth || h !== this.lastHeight);
         const dataChanged = (dataHash !== this.lastDataHash);
+        if (dataChanged) {
+            this.allRows = pbData ?? [];
+            this.virtualScrollY = 0;   // reset to top whenever data changes
+        }
+
+        const sizeChanged = (w !== this.lastWidth || h !== this.lastHeight);
 
         if (!this.vegaView || dataChanged) {
             // (Re)build the view from scratch whenever data changes
-            this.createView(w, h, pbData ?? undefined);
+            this.createView(w, h, this.virtualSlice());
         } else if (sizeChanged) {
             // Only resize — preserves scroll/zoom state
             this.resizeView(w, h);
@@ -137,7 +157,7 @@ export class Visual implements IVisual {
         const runtime = vega.parse(spec);
 
         this.vegaView = new vega.View(runtime, {
-            renderer : "svg",
+            renderer : "canvas",  // Canvas is 10-50x faster than SVG for many marks
             container: this.host,
             hover    : true,
             logLevel : vega.Warn
@@ -166,27 +186,28 @@ export class Visual implements IVisual {
             const dx = e.deltaX * norm;
             const dy = e.deltaY * norm;
 
-            // Use pending values if a RAF is already queued (accumulate)
-            const curXDom   = this.pendingXDom   ?? (v.signal("xDom")   as [number, number]);
-            const curYRange = this.pendingYRange  ?? (v.signal("yRange") as [number, number]);
-
-            // ── Horizontal pan (deltaX) ──────────────────────────────────
+            // ── Horizontal pan (deltaX) — push xDom signal directly ──────
             if (dx !== 0) {
+                const curXDom    = this.pendingXDom ?? (v.signal("xDom") as [number, number]);
                 const ganttWidth: number = v.signal("ganttWidth") ?? 1;
-                const span = curXDom[1] - curXDom[0];
+                const span  = curXDom[1] - curXDom[0];
                 const shift = dx * span / ganttWidth;
                 this.pendingXDom = [curXDom[0] + shift, curXDom[1] + shift];
             }
 
-            // ── Vertical pan (deltaY) ────────────────────────────────────
+            // ── Vertical pan (deltaY) — managed entirely via data slicing ─
+            // Instead of scrolling inside Vega (yRange), we shift the window
+            // of rows we send to Vega. This keeps the rendered DOM tiny.
             if (dy !== 0) {
-                const height:       number = v.signal("height")       ?? 500;
-                const scaledHeight: number = v.signal("scaledHeight") ?? height;
-                const span   = curYRange[1] - curYRange[0];
-                const minY   = height >= scaledHeight ? 0              : height - scaledHeight;
-                const maxY   = height >= scaledHeight ? height         : scaledHeight;
-                const newY0  = Math.min(maxY - span, Math.max(minY, curYRange[0] + dy));
-                this.pendingYRange = [newY0, newY0 + span];
+                const maxScrollY = Math.max(
+                    0,
+                    (this.allRows.length - Math.ceil(this.viewportHeight / ROW_HEIGHT)) * ROW_HEIGHT
+                );
+                this.virtualScrollY = Math.min(
+                    maxScrollY,
+                    Math.max(0, this.virtualScrollY + dy)
+                );
+                this.pendingVirtualRefresh = true;
             }
 
             // ── Flush once per animation frame ───────────────────────────
@@ -194,8 +215,22 @@ export class Visual implements IVisual {
                 this.rafPending = true;
                 requestAnimationFrame(() => {
                     if (!this.vegaView) { this.rafPending = false; return; }
-                    if (this.pendingXDom)   { this.vegaView.signal("xDom",   this.pendingXDom);   this.pendingXDom   = null; }
-                    if (this.pendingYRange) { this.vegaView.signal("yRange", this.pendingYRange); this.pendingYRange = null; }
+
+                    if (this.pendingXDom) {
+                        this.vegaView.signal("xDom", this.pendingXDom);
+                        this.pendingXDom = null;
+                    }
+
+                    if (this.pendingVirtualRefresh) {
+                        const slice = this.virtualSlice();
+                        const cs = vega.changeset().remove(() => true).insert(slice);
+                        this.vegaView.change("dataset", cs);
+                        // Reset yRange origin to 0; the spec's update expression
+                        // will correct the span to match the new scaledHeight.
+                        this.vegaView.signal("yRange", [0, 9999]);
+                        this.pendingVirtualRefresh = false;
+                    }
+
                     this.vegaView.runAsync();
                     this.rafPending = false;
                 });
@@ -205,14 +240,28 @@ export class Visual implements IVisual {
         this.host.addEventListener("wheel", this.wheelListener, { passive: false });
     }
 
+    /* ── Returns only the rows visible in the current virtual window ── */
+    private virtualSlice(): any[] {
+        if (this.allRows.length === 0) return [];
+        const viewRows = Math.ceil(this.viewportHeight / ROW_HEIGHT);
+        const startIdx = Math.max(0, Math.floor(this.virtualScrollY / ROW_HEIGHT) - VIRT_BUFFER);
+        const endIdx   = Math.min(this.allRows.length, startIdx + viewRows + VIRT_BUFFER * 2);
+        const slice    = this.allRows.slice(startIdx, endIdx);
+        // Strip dependency arrows when too many rows — rendering them is expensive
+        if (slice.length > DEPS_THRESHOLD) {
+            return slice.map((r: any) => ({ ...r, dependencies: "" }));
+        }
+        return slice;
+    }
+
     private detachWheelListener(): void {
         if (this.wheelListener) {
             this.host.removeEventListener("wheel", this.wheelListener);
             this.wheelListener = null;
         }
-        this.rafPending    = false;
-        this.pendingXDom   = null;
-        this.pendingYRange = null;
+        this.rafPending           = false;
+        this.pendingXDom          = null;
+        this.pendingVirtualRefresh = false;
     }
 
     private resizeView(w: number, h: number): void {
@@ -231,22 +280,39 @@ export class Visual implements IVisual {
         const table = dataViews[0].table;
         if (!table.rows || table.rows.length === 0) return null;
 
-        // Build a column-name → column-index map from the roles metadata
+        // Build a column-name → column-index map from the roles metadata.
+        // hierarchyLevels accepts multiple columns; collect them in binding order.
         const cols = table.columns;
         const idx: Record<string, number> = {};
+        const hierarchyColIndices: number[] = [];
+
         cols.forEach((col, i) => {
             const roles = Object.keys(col.roles || {});
-            if (roles.length > 0) idx[roles[0]] = i;
+            if (roles.includes("hierarchyLevels")) {
+                hierarchyColIndices.push(i);   // preserve order assigned by user
+            } else if (roles.length > 0) {
+                idx[roles[0]] = i;
+            }
         });
 
-        // Require at least one real field to be bound before replacing the built-in data.
-        // This avoids the chart silently falling back to the hardcoded spec values when
-        // the user has bound some — but not all — fields.
-        const hasAny = Object.keys(idx).length > 0;
+        const hasAny = Object.keys(idx).length > 0 || hierarchyColIndices.length > 0;
         if (!hasAny) return null;
 
-        // Today's date string used as fallback when start/end are not bound
         const todayStr = fmtDate(new Date());
+
+        // ── WBS mode: pre-build a lookup map for parent-chain walks ─────────────
+        // Active when both "id" (= wbs_id) and "wbsParentId" (= parent_wbs_id)
+        // are bound. The "task" column carries the wbs_name.
+        const hasWbs = idx["wbsParentId"] !== undefined && idx["id"] !== undefined;
+        const wbsNodeMap = new Map<string, { name: string; parentId: string }>();
+        if (hasWbs) {
+            for (const r of table.rows) {
+                const nodeId   = String(r[idx["id"]]          ?? "").trim();
+                const nodeName = String(r[idx["task"]]        ?? "").trim();
+                const parentId = String(r[idx["wbsParentId"]] ?? "").trim();
+                if (nodeId) wbsNodeMap.set(nodeId, { name: nodeName, parentId });
+            }
+        }
 
         return table.rows.map((row, rowIdx) => {
             const getStr = (role: string) =>
@@ -254,7 +320,6 @@ export class Visual implements IVisual {
             const getNum = (role: string) =>
                 idx[role] !== undefined ? Number(row[idx[role]] ?? 0) : 0;
 
-            // Dates come from Power BI as Date objects or ISO strings
             const rawStart = idx["startDate"] !== undefined ? row[idx["startDate"]] : null;
             const rawEnd   = idx["endDate"]   !== undefined ? row[idx["endDate"]]   : null;
             const toDateStr = (raw: any, fallback: string): string => {
@@ -268,12 +333,44 @@ export class Visual implements IVisual {
                 milestoneRaw === "true" || milestoneRaw === "1" || milestoneRaw === "yes"
                     ? true : null;
 
-            const taskName  = getStr("task") || `Task ${rowIdx + 1}`;
-            // If no phase field is bound, group everything under a single "Tasks" phase
-            const phaseName = idx["phase"] !== undefined ? getStr("phase") : "Tasks";
-            const startStr  = toDateStr(rawStart, todayStr);
-            // Default end = start (same-day bar) when not provided
-            const endStr    = toDateStr(rawEnd, startStr);
+            const taskName = getStr("task") || `Task ${rowIdx + 1}`;
+            const startStr = toDateStr(rawStart, todayStr);
+            const endStr   = toDateStr(rawEnd, startStr);
+
+            // ── Phase resolution — priority: WBS > hierarchyLevels > phase > default
+            let phaseName: string;
+
+            if (hasWbs) {
+                // Walk the parent chain upward, build path of ancestor names.
+                // Guard against circular references with a visited set.
+                const selfId = String(row[idx["id"]] ?? "").trim();
+                const path: string[] = [];
+                const visited = new Set<string>();
+                let parentId = wbsNodeMap.get(selfId)?.parentId ?? "";
+                while (parentId && !visited.has(parentId)) {
+                    visited.add(parentId);
+                    const node = wbsNodeMap.get(parentId);
+                    if (!node) break;
+                    path.unshift(node.name);   // prepend so root → leaf order
+                    parentId = node.parentId;
+                }
+                phaseName = path.length > 0
+                    ? path.join(" > ")
+                    : (wbsNodeMap.get(selfId)?.name ?? "Tasks");
+
+            } else if (hierarchyColIndices.length > 0) {
+                // Concatenate non-empty values from each hierarchy column, in order.
+                const parts = hierarchyColIndices
+                    .map(i => String(row[i] ?? "").trim())
+                    .filter(v => v !== "");
+                phaseName = parts.join(" > ") || "Tasks";
+
+            } else if (idx["phase"] !== undefined) {
+                phaseName = getStr("phase") || "Tasks";
+
+            } else {
+                phaseName = "Tasks";
+            }
 
             return {
                 id          : idx["id"] !== undefined ? row[idx["id"]] : rowIdx + 1,

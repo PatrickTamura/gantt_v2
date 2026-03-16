@@ -59,22 +59,36 @@
       "name": "status",
       "kind": "Grouping",
       "description": "Status label (Low / Medium / High / Very High)"
+    },
+    {
+      "displayName": "WBS Parent ID",
+      "name": "wbsParentId",
+      "kind": "Grouping",
+      "description": "parent_wbs_id from PROJWBS — enables automatic WBS hierarchy. Requires id (wbs_id) and task (wbs_name) to also be bound."
+    },
+    {
+      "displayName": "Hierarchy Levels",
+      "name": "hierarchyLevels",
+      "kind": "Grouping",
+      "description": "Drag up to 8 columns in order (e.g. CWA, Discipline, Sub-Discipline). Used as phase grouping when WBS Parent ID is not bound."
     }
   ],
   "dataViewMappings": [
     {
       "conditions": [
         {
-          "id":           { "max": 1 },
-          "phase":        { "max": 1 },
-          "task":         { "max": 1 },
-          "milestone":    { "max": 1 },
-          "startDate":    { "max": 1 },
-          "endDate":      { "max": 1 },
-          "completion":   { "max": 1 },
-          "dependencies": { "max": 1 },
-          "assignee":     { "max": 1 },
-          "status":       { "max": 1 }
+          "id":               { "max": 1 },
+          "phase":            { "max": 1 },
+          "task":             { "max": 1 },
+          "milestone":        { "max": 1 },
+          "startDate":        { "max": 1 },
+          "endDate":          { "max": 1 },
+          "completion":       { "max": 1 },
+          "dependencies":     { "max": 1 },
+          "assignee":         { "max": 1 },
+          "status":           { "max": 1 },
+          "wbsParentId":      { "max": 1 },
+          "hierarchyLevels":  { "max": 8 }
         }
       ],
       "table": {
@@ -89,7 +103,9 @@
             { "for": { "in": "completion" } },
             { "for": { "in": "dependencies" } },
             { "for": { "in": "assignee" } },
-            { "for": { "in": "status" } }
+            { "for": { "in": "status" } },
+            { "for": { "in": "wbsParentId" } },
+            { "for": { "in": "hierarchyLevels" } }
           ],
           "dataReductionAlgorithm": { "bottom": { "count": 10000 } }
         }
