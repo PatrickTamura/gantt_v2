@@ -1,0 +1,17 @@
+/* Gantt Deneb — minimal host stylesheet */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+.gantt-deneb-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+.gantt-deneb-host > div,
+.gantt-deneb-host > svg {
+  display: block;
+}
+

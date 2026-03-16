@@ -1,0 +1,26 @@
+{
+  "visual": {
+    "name": "ganttDeneb",
+    "displayName": "Gantt Deneb",
+    "guid": "ganttDenebF8A3C92E1D4B567890ABCDEF01234567",
+    "visualClassName": "Visual",
+    "version": "1.0.0.0",
+    "description": "Gantt chart powered by Vega (David Bacci template). Scroll left/right to pan horizontally, scroll up/down to pan vertically.",
+    "supportUrl": "https://github.com",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.3.0",
+  "author": {
+    "name": "Jubileu",
+    "email": "jubileu@example.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "externalJS": null,
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": [],
+  "version": "2.1.0.0"
+}

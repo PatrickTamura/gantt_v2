@@ -1,0 +1,100 @@
+{
+  "dataRoles": [
+    {
+      "displayName": "ID",
+      "name": "id",
+      "kind": "Grouping",
+      "description": "Unique task identifier"
+    },
+    {
+      "displayName": "Phase",
+      "name": "phase",
+      "kind": "Grouping",
+      "description": "Phase / group the task belongs to"
+    },
+    {
+      "displayName": "Task",
+      "name": "task",
+      "kind": "Grouping",
+      "description": "Task name"
+    },
+    {
+      "displayName": "Milestone",
+      "name": "milestone",
+      "kind": "Grouping",
+      "description": "True if this row is a milestone"
+    },
+    {
+      "displayName": "Start Date",
+      "name": "startDate",
+      "kind": "Grouping",
+      "description": "Task start date"
+    },
+    {
+      "displayName": "End Date",
+      "name": "endDate",
+      "kind": "Grouping",
+      "description": "Task end date"
+    },
+    {
+      "displayName": "Completion %",
+      "name": "completion",
+      "kind": "Measure",
+      "description": "Percentage complete (0–100)"
+    },
+    {
+      "displayName": "Dependencies",
+      "name": "dependencies",
+      "kind": "Grouping",
+      "description": "Comma-separated list of predecessor task IDs"
+    },
+    {
+      "displayName": "Assignee",
+      "name": "assignee",
+      "kind": "Grouping",
+      "description": "Name of the person responsible"
+    },
+    {
+      "displayName": "Status",
+      "name": "status",
+      "kind": "Grouping",
+      "description": "Status label (Low / Medium / High / Very High)"
+    }
+  ],
+  "dataViewMappings": [
+    {
+      "conditions": [
+        {
+          "id":           { "max": 1 },
+          "phase":        { "max": 1 },
+          "task":         { "max": 1 },
+          "milestone":    { "max": 1 },
+          "startDate":    { "max": 1 },
+          "endDate":      { "max": 1 },
+          "completion":   { "max": 1 },
+          "dependencies": { "max": 1 },
+          "assignee":     { "max": 1 },
+          "status":       { "max": 1 }
+        }
+      ],
+      "table": {
+        "rows": {
+          "select": [
+            { "for": { "in": "id" } },
+            { "for": { "in": "phase" } },
+            { "for": { "in": "task" } },
+            { "for": { "in": "milestone" } },
+            { "for": { "in": "startDate" } },
+            { "for": { "in": "endDate" } },
+            { "for": { "in": "completion" } },
+            { "for": { "in": "dependencies" } },
+            { "for": { "in": "assignee" } },
+            { "for": { "in": "status" } }
+          ],
+          "dataReductionAlgorithm": { "bottom": { "count": 10000 } }
+        }
+      }
+    }
+  ],
+  "privileges": []
+}
