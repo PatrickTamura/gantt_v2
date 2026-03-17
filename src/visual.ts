@@ -402,6 +402,8 @@ export class Visual implements IVisual {
             if (!item?.datum) return;
             // Phase headers have phase === task; skip them (handled by phaseClicked signal)
             if (String(item.datum.phase) === String(item.datum.task)) return;
+            // Sub-headers toggle sub-group collapse; skip click-to-navigate for them
+            if (item.datum._isSubHeader === true) return;
             const startVal: any = item.datum.start;
             if (startVal == null) return;
             // datum.start is a numeric ms timestamp after Vega's input transform
@@ -500,7 +502,9 @@ export class Visual implements IVisual {
                 assignee    : getStr("assignee"),
                 status      : getStr("status"),
                 hyperlink   : "",
-                _groupOrder : groupOrder
+                _groupOrder : groupOrder,
+                _subKey     : "",
+                _isSubHeader: false
             };
         };
 
@@ -550,14 +554,18 @@ export class Visual implements IVisual {
                         assignee    : "",
                         status      : "",
                         hyperlink   : "",
-                        _groupOrder : base
+                        _groupOrder : base,
+                        _subKey     : subKey,
+                        _isSubHeader: true
                     });
 
                     // Task rows sorted by start date
                     group.items
                         .sort((a, b) => a.startTs - b.startTs)
                         .forEach((item, ti) => {
-                            result.push(makeRow(item.row, item.rowIdx, phase, base + ti + 1));
+                            const r = makeRow(item.row, item.rowIdx, phase, base + ti + 1);
+                            r._subKey = subKey;
+                            result.push(r);
                         });
                 });
             }

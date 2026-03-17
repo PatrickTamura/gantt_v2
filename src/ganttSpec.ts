@@ -254,6 +254,22 @@ export const BASE_SPEC: any = {
       ]
     },
     {
+      "name": "subClicked",
+      "value": null,
+      "on": [
+        {
+          "events": "@taskSelector:click,@phaseOutline:click",
+          "update": "yCur[0]==yRange[0]&&yCur[1]==yRange[1]&&xCur[0]===xDom[0]&&xCur[1]===xDom[1]&&datum._isSubHeader==true?{key:datum.phase+'|'+datum._subKey}:null",
+          "force": true
+        },
+        {
+          "events": "@taskTooltips:click",
+          "update": "yCur[0]==yRange[0]&&yCur[1]==yRange[1]&&xCur[0]===xDom[0]&&xCur[1]===xDom[1]&&datum.datum._isSubHeader==true?{key:datum.datum.phase+'|'+datum.datum._subKey}:null",
+          "force": true
+        }
+      ]
+    },
+    {
       "name": "itemHovered",
       "value": {"id": "", "dependencies": []},
       "on": [
@@ -365,6 +381,14 @@ export const BASE_SPEC: any = {
       ]
     },
     {
+      "name": "subGroups",
+      "source": "input",
+      "transform": [
+        {"type": "filter", "expr": "datum._isSubHeader == true"},
+        {"type": "formula", "as": "key", "expr": "datum.phase + '|' + datum._subKey"}
+      ]
+    },
+    {
       "name": "phases",
       "source": "input",
       "transform": [
@@ -399,6 +423,15 @@ export const BASE_SPEC: any = {
       ]
     },
     {
+      "name": "collapsedSubs",
+      "on": [
+        {"trigger": "subClicked", "toggle": "subClicked"},
+        {"trigger": "closeRowsAll", "remove": true},
+        {"trigger": "closeRowsAll", "insert": "data('subGroups')"},
+        {"trigger": "openRowsAll", "remove": true}
+      ]
+    },
+    {
       "name": "phasePaths",
       "source": "phases",
       "transform": [
@@ -414,7 +447,8 @@ export const BASE_SPEC: any = {
       "source": "input",
       "transform": [
         {"type": "filter", "expr": "datum.milestone != true"},
-        {"type": "filter","expr": "!indata('collapsedPhases', 'phase', datum.phase)"}
+        {"type": "filter","expr": "!indata('collapsedPhases', 'phase', datum.phase)"},
+        {"type": "filter","expr": "datum._isSubHeader || datum._subKey==null || datum._subKey=='' || !indata('collapsedSubs','key',datum.phase+'|'+datum._subKey)"}
       ]
     },
     {
@@ -422,7 +456,8 @@ export const BASE_SPEC: any = {
       "source": "input",
       "transform": [
         {"type": "filter", "expr": "datum.milestone == true"},
-        {"type": "filter","expr": "!indata('collapsedPhases', 'phase', datum.phase)"}
+        {"type": "filter","expr": "!indata('collapsedPhases', 'phase', datum.phase)"},
+        {"type": "filter","expr": "datum._subKey==null || datum._subKey=='' || !indata('collapsedSubs','key',datum.phase+'|'+datum._subKey)"}
       ]
     },
     {
@@ -721,7 +756,7 @@ export const BASE_SPEC: any = {
           "height": {"signal": "bandwidth('y')"},
           "fill": {"value": "transparent"},
           "tooltip": {"signal": "datum.bounds.x2 - datum.bounds.x1>=taskColumnWidth-columnPadding-16? datum.datum.task:null"},
-          "cursor": {"signal": "datum.datum.phase == datum.datum.task?'pointer':'auto'"},
+          "cursor": {"signal": "datum.datum.phase == datum.datum.task || datum.datum._isSubHeader == true?'pointer':'auto'"},
           "href": {"field": "datum.hyperlink"}
         }
       }
@@ -776,11 +811,11 @@ export const BASE_SPEC: any = {
               "from": {"data": "yScale"},
               "encode": {
                 "update": {
-                  "fill": {"signal": "datum.id == itemHovered.id && datum.phase == datum.task ?merge(hsl(scale('cDark', datum.phase)), {l:0.40}):datum.phase == datum.task ?scale('cDark', datum.phase):'transparent'"},
+                  "fill": {"signal": "datum.id == itemHovered.id && datum.phase == datum.task ?merge(hsl(scale('cDark', datum.phase)), {l:0.40}):datum.phase == datum.task ?scale('cDark', datum.phase):datum._isSubHeader==true?'#888888':'transparent'"},
                   "x": {"signal": "sqrt(90)/2"},
                   "size": {"value": 90},
                   "yc": {"signal": "(scale('y', datum.id)+bandwidth('y')/2)-1"},
-                  "shape": {"signal": "datum.phase == datum.task && !indata('collapsedPhases', 'phase', datum.phase)?'triangle-down':datum.phase == datum.task && indata('collapsedPhases', 'phase', datum.phase)?'triangle-right':''"}
+                  "shape": {"signal": "datum.phase==datum.task && !indata('collapsedPhases','phase',datum.phase)?'triangle-down':datum.phase==datum.task && indata('collapsedPhases','phase',datum.phase)?'triangle-right':datum._isSubHeader==true && !indata('collapsedSubs','key',datum.phase+'|'+datum._subKey)?'triangle-down':datum._isSubHeader==true && indata('collapsedSubs','key',datum.phase+'|'+datum._subKey)?'triangle-right':''"}
                 }
               }
             }
@@ -1319,7 +1354,7 @@ export const BASE_SPEC: any = {
           "y": {"signal": "scale('y', datum.id)"},
           "height": {"signal": "bandwidth('y')"},
           "fill": {"value": "transparent"},
-          "cursor": {"signal": "datum.phase == datum.task?'pointer':'auto'"},
+          "cursor": {"signal": "datum.phase == datum.task || datum._isSubHeader == true?'pointer':'auto'"},
           "href": {"field": "hyperlink"}
         }
       }
