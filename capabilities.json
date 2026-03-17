@@ -67,6 +67,12 @@
       "description": "parent_wbs_id from PROJWBS — enables automatic WBS hierarchy. Requires id (wbs_id) and task (wbs_name) to also be bound."
     },
     {
+      "displayName": "WBS Parent Name",
+      "name": "wbsParentName",
+      "kind": "Grouping",
+      "description": "Display name of the parent WBS node (e.g. wbs_name of the parent). When bound, skips the tree walk and groups by this value directly — faster and flatter grouping."
+    },
+    {
       "displayName": "Hierarchy Levels",
       "name": "hierarchyLevels",
       "kind": "Grouping",
@@ -88,6 +94,7 @@
           "assignee":         { "max": 1 },
           "status":           { "max": 1 },
           "wbsParentId":      { "max": 1 },
+          "wbsParentName":    { "max": 1 },
           "hierarchyLevels":  { "max": 8 }
         }
       ],
@@ -105,6 +112,7 @@
             { "for": { "in": "assignee" } },
             { "for": { "in": "status" } },
             { "for": { "in": "wbsParentId" } },
+            { "for": { "in": "wbsParentName" } },
             { "for": { "in": "hierarchyLevels" } }
           ],
           "dataReductionAlgorithm": { "bottom": { "count": 10000 } }
