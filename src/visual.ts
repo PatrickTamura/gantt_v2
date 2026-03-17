@@ -32,8 +32,8 @@ import DataView              = powerbi.DataView;
  * ─────────────────────────────────────────────────────────────────────── */
 const PAD_LEFT   = 5;
 const PAD_RIGHT  = 5;
-const PAD_TOP    = 35;
-const PAD_BOTTOM = 5;
+const PAD_TOP    = 55;  // must be > button height (18) + button y-offset (30) + axis room
+const PAD_BOTTOM = 18;  // room for horizontal scrollbar
 
 /* ─── Build the patched Vega spec ──────────────────────────────────────── */
 function buildSpec(width: number, height: number, data?: any[]): any {
@@ -449,8 +449,8 @@ export class Visual implements IVisual {
 
         cols.forEach((col, i) => {
             const roles = Object.keys(col.roles || {});
-            if (roles.includes("hierarchyLevels")) {
-                hierarchyColIndices.push(i);
+            if (roles.includes("hierarchy")) {
+                hierarchyColIndices.push(i);   // preserve binding order
             } else if (roles.length > 0) {
                 idx[roles[0]] = i;
             }
@@ -574,13 +574,10 @@ export class Visual implements IVisual {
             });
         }
 
-        // ── Explicit phase field or default ──
-        return table.rows.map((row, rowIdx) => {
-            const phase = idx["phase"] !== undefined
-                ? (String(row[idx["phase"]] ?? "") || "Tasks")
-                : "Tasks";
-            return makeRow(row, rowIdx, phase, getStartTs(row));
-        });
+        // ── No hierarchy columns bound: default single group ──
+        return table.rows.map((row, rowIdx) =>
+            makeRow(row, rowIdx, "Tasks", getStartTs(row))
+        );
     }
 
     public destroy(): void {

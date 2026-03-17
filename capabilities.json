@@ -7,10 +7,10 @@
       "description": "Unique task identifier"
     },
     {
-      "displayName": "Phase",
-      "name": "phase",
+      "displayName": "Hierarquia",
+      "name": "hierarchy",
       "kind": "Grouping",
-      "description": "Phase / group the task belongs to"
+      "description": "Arraste 1 ou mais colunas. A primeira vira o grupo principal (fase); as seguintes criam sub-níveis dentro dele (ex: CWA → Disciplina → Sub-Disciplina)."
     },
     {
       "displayName": "Task",
@@ -59,36 +59,29 @@
       "name": "status",
       "kind": "Grouping",
       "description": "Status label (Low / Medium / High / Very High)"
-    },
-    {
-      "displayName": "Levels",
-      "name": "hierarchyLevels",
-      "kind": "Grouping",
-      "description": "Drag up to 8 columns (Level 1, Level 2, ...). The first field becomes the top-level group; subsequent fields create nested sub-groups (e.g. CWA → CWP → Discipline)."
     }
   ],
   "dataViewMappings": [
     {
       "conditions": [
         {
-          "id":               { "max": 1 },
-          "phase":            { "max": 1 },
-          "task":             { "max": 1 },
-          "milestone":        { "max": 1 },
-          "startDate":        { "max": 1 },
-          "endDate":          { "max": 1 },
-          "completion":       { "max": 1 },
-          "dependencies":     { "max": 1 },
-          "assignee":         { "max": 1 },
-          "status":           { "max": 1 },
-          "hierarchyLevels":  { "max": 8 }
+          "id":           { "max": 1 },
+          "hierarchy":    { "max": 8 },
+          "task":         { "max": 1 },
+          "milestone":    { "max": 1 },
+          "startDate":    { "max": 1 },
+          "endDate":      { "max": 1 },
+          "completion":   { "max": 1 },
+          "dependencies": { "max": 1 },
+          "assignee":     { "max": 1 },
+          "status":       { "max": 1 }
         }
       ],
       "table": {
         "rows": {
           "select": [
             { "for": { "in": "id" } },
-            { "for": { "in": "phase" } },
+            { "for": { "in": "hierarchy" } },
             { "for": { "in": "task" } },
             { "for": { "in": "milestone" } },
             { "for": { "in": "startDate" } },
@@ -96,8 +89,7 @@
             { "for": { "in": "completion" } },
             { "for": { "in": "dependencies" } },
             { "for": { "in": "assignee" } },
-            { "for": { "in": "status" } },
-            { "for": { "in": "hierarchyLevels" } }
+            { "for": { "in": "status" } }
           ],
           "dataReductionAlgorithm": { "bottom": { "count": 10000 } }
         }
@@ -123,3 +115,4 @@
   },
   "privileges": []
 }
+

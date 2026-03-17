@@ -585,8 +585,9 @@ export const BASE_SPEC: any = {
         "update": {
           "x": {"signal": "datum.side=='left'?datum.x:columnsWidth+ganttWidth-datum.x"},
           "width": {"signal": "datum.side=='left'?30:50"},
-          "y": {"value": -30},
+          "y": {"value": -48},
           "height": {"signal": "18"},
+          "zindex": {"value": 500},
           "stroke": {"signal": "'#7f7f7f'"},
           "strokeWidth": {"value": 1},
           "cornerRadiusTopLeft": {"field": "leftRadius"},
