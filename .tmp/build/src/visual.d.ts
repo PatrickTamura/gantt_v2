@@ -5,6 +5,7 @@ import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisual = powerbi.extensibility.visual.IVisual;
 export declare class Visual implements IVisual {
     private host;
+    private pbiHost;
     private vegaView;
     private lastWidth;
     private lastHeight;
@@ -13,10 +14,20 @@ export declare class Visual implements IVisual {
     private rafPending;
     private pendingXDom;
     private pendingYRange;
+    private vScrollEl;
+    private hScrollEl;
+    private formattingSettings;
+    private formattingSettingsService;
+    private titleEl;
     constructor(options: VisualConstructorOptions);
     update(options: VisualUpdateOptions): void;
+    private applyTitle;
+    getFormattingModel(): powerbi.visuals.FormattingModel;
     private createView;
     private attachWheelListener;
+    private buildScrollbar;
+    private buildHScrollbar;
+    private attachClickToNavigate;
     private detachWheelListener;
     private resizeView;
     private extractData;

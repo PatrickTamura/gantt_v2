@@ -61,22 +61,10 @@
       "description": "Status label (Low / Medium / High / Very High)"
     },
     {
-      "displayName": "WBS Parent ID",
-      "name": "wbsParentId",
-      "kind": "Grouping",
-      "description": "parent_wbs_id from PROJWBS — enables automatic WBS hierarchy. Requires id (wbs_id) and task (wbs_name) to also be bound."
-    },
-    {
-      "displayName": "WBS Parent Name",
-      "name": "wbsParentName",
-      "kind": "Grouping",
-      "description": "Display name of the parent WBS node (e.g. wbs_name of the parent). When bound, skips the tree walk and groups by this value directly — faster and flatter grouping."
-    },
-    {
-      "displayName": "Hierarchy Levels",
+      "displayName": "Levels",
       "name": "hierarchyLevels",
       "kind": "Grouping",
-      "description": "Drag up to 8 columns in order (e.g. CWA, Discipline, Sub-Discipline). Used as phase grouping when WBS Parent ID is not bound."
+      "description": "Drag up to 8 columns (Level 1, Level 2, ...). The first field becomes the top-level group; subsequent fields create nested sub-groups (e.g. CWA → CWP → Discipline)."
     }
   ],
   "dataViewMappings": [
@@ -93,8 +81,6 @@
           "dependencies":     { "max": 1 },
           "assignee":         { "max": 1 },
           "status":           { "max": 1 },
-          "wbsParentId":      { "max": 1 },
-          "wbsParentName":    { "max": 1 },
           "hierarchyLevels":  { "max": 8 }
         }
       ],
@@ -111,8 +97,6 @@
             { "for": { "in": "dependencies" } },
             { "for": { "in": "assignee" } },
             { "for": { "in": "status" } },
-            { "for": { "in": "wbsParentId" } },
-            { "for": { "in": "wbsParentName" } },
             { "for": { "in": "hierarchyLevels" } }
           ],
           "dataReductionAlgorithm": { "bottom": { "count": 10000 } }
@@ -120,5 +104,22 @@
       }
     }
   ],
+  "objects": {
+    "title": {
+      "properties": {
+        "showTitle":     { "type": { "bool": true } },
+        "titleText":     { "type": { "text": true } },
+        "titleFontSize": { "type": { "numeric": true } },
+        "titleColor":    { "type": { "fill": { "solid": { "color": true } } } }
+      }
+    },
+    "ganttOptions": {
+      "properties": {
+        "showTooltips": { "type": { "bool": true } },
+        "rowHeight":    { "type": { "numeric": true } },
+        "showGrid":     { "type": { "bool": true } }
+      }
+    }
+  },
   "privileges": []
 }

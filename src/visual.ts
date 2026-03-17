@@ -15,11 +15,14 @@
 import powerbi from "powerbi-visuals-api";
 import "./../style/visual.less";
 import { BASE_SPEC } from "./ganttSpec";
+import { VisualFormattingSettingsModel } from "./settings";
 import * as vega from "vega";
+import { FormattingSettingsService } from "powerbi-visuals-utils-formattingmodel";
 
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
 import VisualUpdateOptions   = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisual               = powerbi.extensibility.visual.IVisual;
+import IVisualHost           = powerbi.extensibility.visual.IVisualHost;
 import DataView              = powerbi.DataView;
 
 /* ─── Padding constants ────────────────────────────────────────────────────
@@ -87,6 +90,7 @@ function fmtDate(d: Date): string {
 /* ─── Visual class ─────────────────────────────────────────────────────── */
 export class Visual implements IVisual {
     private host: HTMLElement;
+    private pbiHost: IVisualHost;
     private vegaView: any = null;
     private lastWidth  = 0;
     private lastHeight = 0;
@@ -98,33 +102,82 @@ export class Visual implements IVisual {
     private pendingXDom:   [number, number] | null = null;
     private pendingYRange: [number, number] | null = null;
     private vScrollEl:     HTMLInputElement | null = null;
+    private hScrollEl:     HTMLInputElement | null = null;
+
+    // Formatting
+    private formattingSettings: VisualFormattingSettingsModel;
+    private formattingSettingsService: FormattingSettingsService;
+
+    // Title element
+    private titleEl: HTMLDivElement | null = null;
 
     constructor(options: VisualConstructorOptions) {
         this.host = options.element;
+        this.pbiHost = options.host;
         this.host.classList.add("gantt-deneb-host");
+        this.formattingSettings = new VisualFormattingSettingsModel();
+        this.formattingSettingsService = new FormattingSettingsService();
     }
 
     public update(options: VisualUpdateOptions): void {
+        // Parse formatting settings from dataViews
+        if (options.dataViews && options.dataViews[0]) {
+            this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(
+                VisualFormattingSettingsModel, options.dataViews[0]
+            );
+        }
+
         const vp = options.viewport;
         const w  = Math.max(200, Math.floor(vp.width));
         const h  = Math.max(100, Math.floor(vp.height));
+
+        // Apply title
+        this.applyTitle(w);
+
+        // Calculate effective height (subtract title if visible)
+        const titleH = this.titleEl ? this.titleEl.offsetHeight : 0;
+        const effectiveH = Math.max(100, h - titleH);
 
         // Extract Power BI data (returns null when no data is bound)
         const pbData = this.extractData(options.dataViews);
         const dataHash = pbData ? JSON.stringify(pbData) : "";
 
-        const sizeChanged = (w !== this.lastWidth || h !== this.lastHeight);
+        const sizeChanged = (w !== this.lastWidth || effectiveH !== this.lastHeight);
         const dataChanged = (dataHash !== this.lastDataHash);
 
         if (!this.vegaView || dataChanged) {
-            this.createView(w, h, pbData ?? undefined);
+            this.createView(w, effectiveH, pbData ?? undefined);
         } else if (sizeChanged) {
-            this.resizeView(w, h);
+            this.resizeView(w, effectiveH);
         }
 
         this.lastWidth    = w;
-        this.lastHeight   = h;
+        this.lastHeight   = effectiveH;
         this.lastDataHash = dataHash;
+    }
+
+    private applyTitle(_w: number): void {
+        const show = this.formattingSettings.titleCard.showTitle.value;
+        if (!show) {
+            if (this.titleEl) { this.titleEl.remove(); this.titleEl = null; }
+            return;
+        }
+        if (!this.titleEl) {
+            this.titleEl = document.createElement("div");
+            this.titleEl.className = "gantt-title";
+            this.host.insertBefore(this.titleEl, this.host.firstChild);
+        }
+        const tc = this.formattingSettings.titleCard;
+        this.titleEl.textContent = tc.titleText.value || "Gantt Chart";
+        this.titleEl.style.fontSize = (tc.titleFontSize.value || 14) + "px";
+        this.titleEl.style.color = tc.titleColor.value.value || "#333333";
+        this.titleEl.style.fontWeight = "600";
+        this.titleEl.style.padding = "4px 8px";
+        this.titleEl.style.fontFamily = "Segoe UI, sans-serif";
+    }
+
+    public getFormattingModel(): powerbi.visuals.FormattingModel {
+        return this.formattingSettingsService.buildFormattingModel(this.formattingSettings);
     }
 
     private createView(w: number, h: number, data?: any[]): void {
@@ -149,6 +202,8 @@ export class Visual implements IVisual {
         this.vegaView.runAsync().then(() => {
             this.attachWheelListener();
             this.buildScrollbar();
+            this.buildHScrollbar();
+            this.attachClickToNavigate();
         });
     }
 
@@ -168,7 +223,7 @@ export class Visual implements IVisual {
             // Normalise deltaMode: 0 = px, 1 = line (≈16 px), 2 = page (≈256 px)
             const norm = e.deltaMode === 0 ? 1 : e.deltaMode === 1 ? 16 : 256;
             const dx = e.deltaX * norm;
-            const dy = e.deltaY * norm;
+            const dy = -(e.deltaY * norm);  // negate: natural scroll (two-finger-up → content down)
 
             // ── Horizontal pan (deltaX) ──────────────────────────────────
             if (dx !== 0) {
@@ -277,6 +332,90 @@ export class Visual implements IVisual {
         this.vScrollEl = sb;
     }
 
+    /* ─── Native horizontal scrollbar ────────────────────────────────────
+     * A range <input> overlaid at the bottom edge of the visual.
+     * Synced with the xDom signal (timeline pan).
+     * ─────────────────────────────────────────────────────────────────── */
+    private buildHScrollbar(): void {
+        if (this.hScrollEl) { try { this.hScrollEl.remove(); } catch (_) { /* ok */ } }
+
+        const v = this.vegaView;
+        if (!v) return;
+
+        const xExt = v.data("xExt");
+        if (!xExt || xExt.length === 0) { this.hScrollEl = null; return; }
+
+        const sb = document.createElement("input");
+        sb.type  = "range";
+        sb.min   = "0";
+        sb.max   = "10000";
+        sb.value = "0";
+        sb.style.cssText = [
+            "position:absolute", "bottom:0", "left:0",
+            "height:14px", "width:100%",
+            "cursor:pointer", "opacity:0.55", "z-index:20"
+        ].join(";");
+
+        // Scrollbar → Vega: drag pans xDom
+        sb.addEventListener("input", () => {
+            const vw = this.vegaView;
+            if (!vw) return;
+            const xExtNow = vw.data("xExt");
+            if (!xExtNow || xExtNow.length === 0) return;
+            const fullMin = +xExtNow[0].min;
+            const fullMax = +xExtNow[0].max;
+            const curXDom = vw.signal("xDom") as [number, number];
+            const span = curXDom[1] - curXDom[0];
+            const maxStart = Math.max(0, fullMax - span);
+            const newStart = fullMin + (Number(sb.value) / 10000) * (maxStart - fullMin);
+            vw.signal("xDom", [newStart, newStart + span]).runAsync();
+        });
+
+        // Vega → Scrollbar: keep thumb in sync when xDom changes
+        v.addSignalListener("xDom", (_name: string, value: [number, number]) => {
+            if (!this.hScrollEl) return;
+            const vw = this.vegaView;
+            if (!vw) return;
+            const xExtNow = vw.data("xExt");
+            if (!xExtNow || xExtNow.length === 0) return;
+            const fullMin = +xExtNow[0].min;
+            const fullMax = +xExtNow[0].max;
+            const span = value[1] - value[0];
+            const maxStart = Math.max(1, fullMax - span);
+            const x0 = value?.[0] ?? fullMin;
+            this.hScrollEl.value = String(Math.round(((x0 - fullMin) / (maxStart - fullMin)) * 10000));
+        });
+
+        this.host.appendChild(sb);
+        this.hScrollEl = sb;
+    }
+
+    /* ─── Click on activity → scroll to its start ────────────────────────
+     * Adds a Vega event listener on taskBars and milestoneSymbols.
+     * On click, pans xDom so the task's start date is near the left edge.
+     * ─────────────────────────────────────────────────────────────────── */
+    private attachClickToNavigate(): void {
+        const v = this.vegaView;
+        if (!v) return;
+
+        const navigate = (_event: any, item: any) => {
+            if (!item || !item.datum) return;
+            const startVal = item.datum.start;
+            if (startVal == null) return;
+            const startTs = +new Date(startVal);
+            if (isNaN(startTs)) return;
+
+            const curXDom = v.signal("xDom") as [number, number];
+            const span = curXDom[1] - curXDom[0];
+            // Place start date 10% from left edge
+            const offset = span * 0.1;
+            const newStart = startTs - offset;
+            v.signal("xDom", [newStart, newStart + span]).runAsync();
+        };
+
+        v.addEventListener("click", navigate);
+    }
+
     private detachWheelListener(): void {
         if (this.wheelListener) {
             this.host.removeEventListener("wheel", this.wheelListener);
@@ -323,25 +462,6 @@ export class Visual implements IVisual {
 
         const todayStr = fmtDate(new Date());
 
-        // ── WBS mode: pre-build a lookup map for parent-chain walks ─────────────
-        // Active when both "id" (= wbs_id) and "wbsParentId" (= parent_wbs_id)
-        // are bound. The "task" column carries the wbs_name.
-        const hasWbs = idx["wbsParentId"] !== undefined && idx["id"] !== undefined;
-        const wbsNodeMap = new Map<string, { name: string; parentId: string; parentName: string }>();
-        if (hasWbs) {
-            for (const r of table.rows) {
-                const nodeId     = String(r[idx["id"]]              ?? "").trim();
-                const nodeName   = String(r[idx["task"]]            ?? "").trim();
-                const parentId   = String(r[idx["wbsParentId"]]     ?? "").trim();
-                // wbsParentName (optional): display name of the parent node supplied
-                // directly on each row — avoids needing a full tree walk.
-                const parentName = idx["wbsParentName"] !== undefined
-                    ? String(r[idx["wbsParentName"]] ?? "").trim()
-                    : "";
-                if (nodeId) wbsNodeMap.set(nodeId, { name: nodeName, parentId, parentName });
-            }
-        }
-
         return table.rows.map((row, rowIdx) => {
             const getStr = (role: string) =>
                 idx[role] !== undefined ? String(row[idx[role]] ?? "") : "";
@@ -365,40 +485,10 @@ export class Visual implements IVisual {
             const startStr = toDateStr(rawStart, todayStr);
             const endStr   = toDateStr(rawEnd, startStr);
 
-            // ── Phase resolution — priority: WBS > hierarchyLevels > phase > default
+            // ── Phase resolution — priority: hierarchyLevels > phase > default
             let phaseName: string;
 
-            if (hasWbs) {
-                const selfId   = String(row[idx["id"]] ?? "").trim();
-                const selfNode = wbsNodeMap.get(selfId);
-                const parentId = selfNode?.parentId ?? "";
-
-                if (idx["wbsParentName"] !== undefined) {
-                    // Fast path: parent name is provided directly on each row.
-                    // Prefer the stored parentName, fall back to the parent node's
-                    // own name in the map, then the raw parentId as last resort.
-                    const parent = wbsNodeMap.get(parentId);
-                    phaseName = selfNode?.parentName || parent?.name || parentId || "Tasks";
-                } else {
-                    // Slow path: walk the full ancestor chain upward.
-                    // Builds a path string like "Phase > Sub-Phase > Package".
-                    // Visited set protects against circular references.
-                    const path:    string[]  = [];
-                    const visited: Set<string> = new Set();
-                    let   pid                  = parentId;
-                    while (pid && !visited.has(pid)) {
-                        visited.add(pid);
-                        const anc = wbsNodeMap.get(pid);
-                        if (!anc) break;
-                        path.unshift(anc.name);
-                        pid = anc.parentId;
-                    }
-                    phaseName = path.length > 0
-                        ? path.join(" > ")
-                        : (selfNode?.name ?? "Tasks");
-                }
-
-            } else if (hierarchyColIndices.length > 0) {
+            if (hierarchyColIndices.length > 0) {
                 // Concatenate non-empty values from each hierarchy column, in order.
                 const parts = hierarchyColIndices
                     .map(i => String(row[i] ?? "").trim())
