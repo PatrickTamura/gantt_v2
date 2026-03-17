@@ -32,7 +32,7 @@ import DataView              = powerbi.DataView;
  * ─────────────────────────────────────────────────────────────────────── */
 const PAD_LEFT   = 5;
 const PAD_RIGHT  = 5;
-const PAD_TOP    = 70;
+const PAD_TOP    = 35;
 const PAD_BOTTOM = 5;
 
 /* ─── Build the patched Vega spec ──────────────────────────────────────── */
@@ -362,8 +362,8 @@ export class Visual implements IVisual {
             if (!vw) return;
             const xExtNow = vw.data("xExt");
             if (!xExtNow || xExtNow.length === 0) return;
-            const fullMin = +xExtNow[0].min;
-            const fullMax = +xExtNow[0].max;
+            const fullMin = +xExtNow[0].s;  // xExt uses 's' (min start) and 'e' (max end)
+            const fullMax = +xExtNow[0].e;
             const curXDom = vw.signal("xDom") as [number, number];
             const span = curXDom[1] - curXDom[0];
             const maxStart = Math.max(0, fullMax - span);
@@ -378,8 +378,8 @@ export class Visual implements IVisual {
             if (!vw) return;
             const xExtNow = vw.data("xExt");
             if (!xExtNow || xExtNow.length === 0) return;
-            const fullMin = +xExtNow[0].min;
-            const fullMax = +xExtNow[0].max;
+            const fullMin = +xExtNow[0].s;
+            const fullMax = +xExtNow[0].e;
             const span = value[1] - value[0];
             const maxStart = Math.max(1, fullMax - span);
             const x0 = value?.[0] ?? fullMin;
@@ -391,26 +391,27 @@ export class Visual implements IVisual {
     }
 
     /* ─── Click on activity → scroll to its start ────────────────────────
-     * Adds a Vega event listener on taskBars and milestoneSymbols.
-     * On click, pans xDom so the task's start date is near the left edge.
+     * Global click handler — skips phase header rows (phase === task)
+     * so collapse/expand still works normally.
      * ─────────────────────────────────────────────────────────────────── */
     private attachClickToNavigate(): void {
         const v = this.vegaView;
         if (!v) return;
 
         const navigate = (_event: any, item: any) => {
-            if (!item || !item.datum) return;
-            const startVal = item.datum.start;
+            if (!item?.datum) return;
+            // Phase headers have phase === task; skip them (handled by phaseClicked signal)
+            if (String(item.datum.phase) === String(item.datum.task)) return;
+            const startVal: any = item.datum.start;
             if (startVal == null) return;
-            const startTs = +new Date(startVal);
+            // datum.start is a numeric ms timestamp after Vega's input transform
+            const startTs = typeof startVal === "number" ? startVal : +new Date(startVal);
             if (isNaN(startTs)) return;
 
             const curXDom = v.signal("xDom") as [number, number];
             const span = curXDom[1] - curXDom[0];
-            // Place start date 10% from left edge
-            const offset = span * 0.1;
-            const newStart = startTs - offset;
-            v.signal("xDom", [newStart, newStart + span]).runAsync();
+            const offset = span * 0.08;  // place start ~8% from left edge
+            v.signal("xDom", [startTs - offset, startTs - offset + span]).runAsync();
         };
 
         v.addEventListener("click", navigate);
@@ -442,8 +443,6 @@ export class Visual implements IVisual {
         const table = dataViews[0].table;
         if (!table.rows || table.rows.length === 0) return null;
 
-        // Build a column-name → column-index map from the roles metadata.
-        // hierarchyLevels accepts multiple columns; collect them in binding order.
         const cols = table.columns;
         const idx: Record<string, number> = {};
         const hierarchyColIndices: number[] = [];
@@ -451,7 +450,7 @@ export class Visual implements IVisual {
         cols.forEach((col, i) => {
             const roles = Object.keys(col.roles || {});
             if (roles.includes("hierarchyLevels")) {
-                hierarchyColIndices.push(i);   // preserve order assigned by user
+                hierarchyColIndices.push(i);
             } else if (roles.length > 0) {
                 idx[roles[0]] = i;
             }
@@ -462,12 +461,21 @@ export class Visual implements IVisual {
 
         const todayStr = fmtDate(new Date());
 
-        return table.rows.map((row, rowIdx) => {
+        // Helper: numeric start/end timestamps from a raw row
+        const tsOf = (raw: any): number => {
+            if (raw == null) return Date.now();
+            const d = raw instanceof Date ? raw : new Date(raw as string);
+            return isNaN(d.getTime()) ? Date.now() : +d;
+        };
+        const getStartTs = (row: any) => tsOf(idx["startDate"] !== undefined ? row[idx["startDate"]] : null);
+        const getEndTs   = (row: any) => tsOf(idx["endDate"]   !== undefined ? row[idx["endDate"]]   : null);
+
+        // Helper: build one Vega dataset row
+        const makeRow = (row: any, rowIdx: number, phaseName: string, groupOrder: number): any => {
             const getStr = (role: string) =>
                 idx[role] !== undefined ? String(row[idx[role]] ?? "") : "";
             const getNum = (role: string) =>
                 idx[role] !== undefined ? Number(row[idx[role]] ?? 0) : 0;
-
             const rawStart = idx["startDate"] !== undefined ? row[idx["startDate"]] : null;
             const rawEnd   = idx["endDate"]   !== undefined ? row[idx["endDate"]]   : null;
             const toDateStr = (raw: any, fallback: string): string => {
@@ -475,37 +483,15 @@ export class Visual implements IVisual {
                 const d = raw instanceof Date ? raw : new Date(raw as string);
                 return isNaN(d.getTime()) ? fallback : fmtDate(d);
             };
-
             const milestoneRaw = getStr("milestone").toLowerCase();
             const milestone    =
-                milestoneRaw === "true" || milestoneRaw === "1" || milestoneRaw === "yes"
-                    ? true : null;
-
-            const taskName = getStr("task") || `Task ${rowIdx + 1}`;
+                milestoneRaw === "true" || milestoneRaw === "1" || milestoneRaw === "yes" ? true : null;
             const startStr = toDateStr(rawStart, todayStr);
             const endStr   = toDateStr(rawEnd, startStr);
-
-            // ── Phase resolution — priority: hierarchyLevels > phase > default
-            let phaseName: string;
-
-            if (hierarchyColIndices.length > 0) {
-                // Concatenate non-empty values from each hierarchy column, in order.
-                const parts = hierarchyColIndices
-                    .map(i => String(row[i] ?? "").trim())
-                    .filter(v => v !== "");
-                phaseName = parts.join(" > ") || "Tasks";
-
-            } else if (idx["phase"] !== undefined) {
-                phaseName = getStr("phase") || "Tasks";
-
-            } else {
-                phaseName = "Tasks";
-            }
-
             return {
                 id          : idx["id"] !== undefined ? row[idx["id"]] : rowIdx + 1,
                 phase       : phaseName,
-                task        : taskName,
+                task        : getStr("task") || `Task ${rowIdx + 1}`,
                 milestone   : milestone,
                 start       : startStr,
                 end         : endStr,
@@ -513,8 +499,87 @@ export class Visual implements IVisual {
                 dependencies: getStr("dependencies"),
                 assignee    : getStr("assignee"),
                 status      : getStr("status"),
-                hyperlink   : ""
+                hyperlink   : "",
+                _groupOrder : groupOrder
             };
+        };
+
+        // ── Multi-level hierarchy: Level1 = phase, Level2+ = sub-group headers ──
+        if (hierarchyColIndices.length >= 2) {
+            const level1Idx  = hierarchyColIndices[0];
+            const subIndices = hierarchyColIndices.slice(1);
+
+            // Pre-pass: group rows by (phase, subKey)
+            type Group = { minStart: number; maxEnd: number; items: { row: any; rowIdx: number; startTs: number }[] };
+            const groupMap = new Map<string, Map<string, Group>>();
+
+            table.rows.forEach((row, rowIdx) => {
+                const phase  = String(row[level1Idx] ?? "").trim() || "Tasks";
+                const subKey = subIndices.map(i => String(row[i] ?? "").trim()).filter(v => v).join(" | ");
+                if (!groupMap.has(phase))    groupMap.set(phase, new Map());
+                const pg = groupMap.get(phase)!;
+                if (!pg.has(subKey)) pg.set(subKey, { minStart: Infinity, maxEnd: -Infinity, items: [] });
+                const g = pg.get(subKey)!;
+                const s = getStartTs(row);
+                const e = getEndTs(row);
+                g.minStart = Math.min(g.minStart, s);
+                g.maxEnd   = Math.max(g.maxEnd,   e);
+                g.items.push({ row, rowIdx, startTs: s });
+            });
+
+            const result: any[] = [];
+
+            for (const [phase, phaseGroups] of groupMap) {
+                // Sort sub-groups chronologically
+                const subEntries = Array.from(phaseGroups.entries())
+                    .sort((a, b) => a[1].minStart - b[1].minStart);
+
+                subEntries.forEach(([subKey, group], sgIdx) => {
+                    const base = (sgIdx + 1) * 100000;
+
+                    // Synthetic sub-header row (visible as a task bar spanning the sub-group)
+                    result.push({
+                        id          : `sub|${phase}|${subKey}`,
+                        phase       : phase,
+                        task        : `  \u25B8 ${subKey}`,  // "  ▸ Discipline"
+                        milestone   : null,
+                        start       : fmtDate(new Date(isFinite(group.minStart) ? group.minStart : Date.now())),
+                        end         : fmtDate(new Date(isFinite(group.maxEnd)   ? group.maxEnd   : Date.now())),
+                        completion  : 0,
+                        dependencies: "",
+                        assignee    : "",
+                        status      : "",
+                        hyperlink   : "",
+                        _groupOrder : base
+                    });
+
+                    // Task rows sorted by start date
+                    group.items
+                        .sort((a, b) => a.startTs - b.startTs)
+                        .forEach((item, ti) => {
+                            result.push(makeRow(item.row, item.rowIdx, phase, base + ti + 1));
+                        });
+                });
+            }
+
+            return result.length > 0 ? result : null;
+        }
+
+        // ── Single hierarchy level: phase = level1, sort by date ──
+        if (hierarchyColIndices.length === 1) {
+            const level1Idx = hierarchyColIndices[0];
+            return table.rows.map((row, rowIdx) => {
+                const phase = String(row[level1Idx] ?? "").trim() || "Tasks";
+                return makeRow(row, rowIdx, phase, getStartTs(row));
+            });
+        }
+
+        // ── Explicit phase field or default ──
+        return table.rows.map((row, rowIdx) => {
+            const phase = idx["phase"] !== undefined
+                ? (String(row[idx["phase"]] ?? "") || "Tasks")
+                : "Tasks";
+            return makeRow(row, rowIdx, phase, getStartTs(row));
         });
     }
 

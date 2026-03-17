@@ -355,7 +355,7 @@ export const BASE_SPEC: any = {
         {"type": "formula","as": "completionLabel","expr": "datum.completion+'%'"},
         {
           "type": "window",
-          "sort": {"field": "start", "order": "ascending"},
+          "sort": {"field": "_groupOrder", "order": "ascending"},
           "ops": ["rank"],
           "as": ["taskSort"],
           "groupby": ["phase"]
@@ -585,7 +585,7 @@ export const BASE_SPEC: any = {
         "update": {
           "x": {"signal": "datum.side=='left'?datum.x:columnsWidth+ganttWidth-datum.x"},
           "width": {"signal": "datum.side=='left'?30:50"},
-          "y": {"value": -60},
+          "y": {"value": -30},
           "height": {"signal": "18"},
           "stroke": {"signal": "'#7f7f7f'"},
           "strokeWidth": {"value": 1},
